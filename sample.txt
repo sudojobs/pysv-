@@ -1,0 +1,122 @@
+
+=== stimulus.py ===
+
+import numpy as np
+
+def generate_rand_arr(seed, size):
+    global rand_array
+    np.random.seed(seed)
+    rand_array = np.random.rand(size)
+
+def get_array_data(idx):
+    return rand_array[idx]
+
+
+=== dpi.c ===
+
+#include <Python.h>
+#include <svdpi.h>
+#include <stdio.h>
+
+void init_python()
+{
+    Py_Initialize();
+    PyRun_SimpleString("import sys\nsys.path.append('.')");
+    PyRun_SimpleString("import stimulus");
+}
+
+void generate_rand_array(int seed, int size)
+{
+    PyObject *pModule, *pFunc, *pArgs;
+    
+    pModule = PyImport_ImportModule("stimulus");
+    if (pModule != NULL) {
+        pFunc = PyObject_GetAttrString(pModule, "generate_rand_arr");
+        if (pFunc && PyCallable_Check(pFunc)) {
+            pArgs = PyTuple_New(2);
+            PyTuple_SetItem(pArgs, 0, PyLong_FromLong(seed));
+            PyTuple_SetItem(pArgs, 1, PyLong_FromLong(size));
+            PyObject_CallObject(pFunc, pArgs);
+            Py_DECREF(pArgs);
+        }
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule);
+    } else {
+        PyErr_Print();
+        fprintf(stderr, "ERROR: Failed to load stimulus.py or function\n");
+    }
+}
+
+double get_array_data(int idx)
+{
+    PyObject *pModule, *pFunc, *pArgs, *pValue;
+    double result = 0.0;
+
+    pModule = PyImport_ImportModule("stimulus");
+    if (pModule != NULL) {
+        pFunc = PyObject_GetAttrString(pModule, "get_array_data");
+        if (pFunc && PyCallable_Check(pFunc)) {
+            pArgs = PyTuple_New(1);
+            PyTuple_SetItem(pArgs, 0, PyLong_FromLong(idx));
+            pValue = PyObject_CallObject(pFunc, pArgs);
+            if (pValue != NULL) {
+                result = PyFloat_AsDouble(pValue);
+                Py_DECREF(pValue);
+            }
+            Py_DECREF(pArgs);
+        }
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule);
+    } else {
+        PyErr_Print();
+        fprintf(stderr, "ERROR: Failed to load stimulus.py or function\n");
+    }
+
+    return result;
+}
+
+void shutdown_python()
+{
+    Py_Finalize();
+}
+
+
+=== dut.sv ===
+
+module dut;
+
+    import "DPI-C" function void init_python();
+    import "DPI-C" function void shutdown_python();
+    import "DPI-C" function void generate_rand_array(int seed, int size);
+    import "DPI-C" function real get_array_data(int idx);
+
+    initial begin
+        real val;
+        int i;
+
+        init_python();
+        generate_rand_array(42, 10);  // seed=42, size=10
+
+        for (i = 0; i < 10; i++) begin
+            val = get_array_data(i);
+            $display("rand_array[%0d] = %0f", i, val);
+            #10;
+        end
+
+        shutdown_python();
+        $finish;
+    end
+
+endmodule
+
+
+=== run.sh ===
+
+#!/bin/bash
+
+# Compile DPI-C file
+gcc -c -fPIC dpi.c -o dpi.o $(python3-config --includes)
+
+# Run Xcelium
+xrun -sv dpi.o dut.sv -access +rwc -sv_lib dpi $(python3-config --ldflags)
+
