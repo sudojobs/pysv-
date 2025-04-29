@@ -1,0 +1,110 @@
+
+Python + Verilog + C integration using Python C API for Xcelium Simulation
+
+1. Python File (stimulus.py):
+
+import numpy as np
+
+# Global counter
+counter = 0
+
+def get_next_value():
+    global counter
+    val = int(np.random.randint(0, 256))
+    counter += 1
+    return val
+
+
+2. C File (dpi.c):
+
+#include <Python.h>
+#include <svdpi.h>
+#include <stdio.h>
+
+// Initialize Python Interpreter and stimulus module
+void init_python()
+{
+    Py_Initialize();
+    PyRun_SimpleString("import sys\nsys.path.append('.')");
+    PyRun_SimpleString("import stimulus");
+}
+
+// Finalize Python Interpreter
+void shutdown_python()
+{
+    Py_Finalize();
+}
+
+// Fetch value from Python
+int get_stimulus_value()
+{
+    PyObject *pModule, *pFunc, *pValue;
+    int result = -1;
+
+    pModule = PyImport_ImportModule("stimulus");
+    if (pModule != NULL) {
+        pFunc = PyObject_GetAttrString(pModule, "get_next_value");
+        if (pFunc && PyCallable_Check(pFunc)) {
+            pValue = PyObject_CallObject(pFunc, NULL);
+            if (pValue != NULL) {
+                result = (int)PyLong_AsLong(pValue);
+                Py_DECREF(pValue);
+            }
+        }
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule);
+    } else {
+        PyErr_Print();
+        fprintf(stderr, "ERROR: Failed to load Python module\n");
+    }
+
+    return result;
+}
+
+
+3. Verilog File (dut.sv):
+
+module dut;
+
+    import "DPI-C" function void init_python();
+    import "DPI-C" function void shutdown_python();
+    import "DPI-C" function int get_stimulus_value();
+
+    initial begin
+        int val;
+        init_python();
+
+        repeat (20) begin
+            val = get_stimulus_value();
+            if (val == -1)
+                $display("Error in fetching stimulus");
+            else
+                $display("Received stimulus: %0d", val);
+            #10;
+        end
+
+        shutdown_python();
+        $finish;
+    end
+
+endmodule
+
+
+4. Run Script (run.sh):
+
+#!/bin/bash
+
+# Compile DPI-C file
+gcc -c -fPIC dpi.c -o dpi.o $(python3-config --includes)
+
+# Run Xcelium
+xrun -sv dpi.o dut.sv -access +rwc -sv_lib dpi $(python3-config --ldflags)
+
+# Make the run script executable:
+# chmod +x run.sh
+# Then run:
+# ./run.sh
+
+Notes:
+- Ensure Python-dev is installed (`sudo apt-get install python3-dev`).
+- Ensure stimulus.py is in the same directory or path is properly set.
